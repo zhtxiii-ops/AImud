@@ -1,0 +1,20 @@
+# Logs
+*.log
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Sensitive information
+LLM.txt
+
+# Local configuration/transient
+socket.txt
+knowledge_base.json
+
+# Text editors
+.vscode/
+.idea/
+
+# OS specific
+.DS_Store
