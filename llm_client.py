@@ -1,22 +1,12 @@
 import os
 import json
 from openai import OpenAI
+import config
 
-# 默认配置
-try:
-    # 如果不需要全局配置库，就直接移除raise的注释
-    # raise
-    import 全局配置
-    API_KEY = 全局配置.获取配置("deepseek_api_key")
-except:
-    try:
-        API_KEY = os.environ["DEEPSEEK_API_KEY"]
-    except:
-        raise Exception('请设置 deepseek api key\n可以用环境变量"DEEPSEEK_API_KEY"或修改本文件')
-        # 修改当前文件的方法：注释掉raise, 把下面的API_KEY填上并移除注释
-        # API_KEY = '...'
-BASE_URL = "https://api.deepseek.com"
-MODEL = "deepseek-chat"
+# 从统一配置文件读取配置
+API_KEY = config.API_KEY
+BASE_URL = config.BASE_URL
+MODEL = config.MODEL
 
 class LLMClient:
     def __init__(self, api_key=None, base_url=None, model=None):

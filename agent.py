@@ -5,23 +5,15 @@ import json
 import sys
 import os
 from llm_client import LLMClient
+import config
+from config import Colors
 
-# 配置
-TARGET_IP = "127.0.0.1"
-TARGET_PORT = 4000
-MAX_HISTORY_ROUNDS = 10
-LOG_FILE = "agent_interaction.log"
-KB_FILE = "knowledge_base.json"
-
-class Colors:
-    RESET = "\033[0m"
-    RED = "\033[91m"
-    GREEN = "\033[92m"  # Client
-    YELLOW = "\033[93m" # Short-term Goal
-    BLUE = "\033[94m"   # Long-term Goal
-    MAGENTA = "\033[95m" # KB Update
-    CYAN = "\033[96m"   # Analysis
-    WHITE = "\033[97m"
+# 使用 config 中的配置
+TARGET_IP = config.TARGET_IP
+TARGET_PORT = config.TARGET_PORT
+MAX_HISTORY_ROUNDS = config.MAX_HISTORY_ROUNDS
+LOG_FILE = config.LOG_FILE
+KB_FILE = config.KB_FILE
 
 def log_colored(tag, message, color=None):
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -193,7 +185,7 @@ def main():
                 history_str = "\n".join(recent_history)
                 
                 system_prompt = f"""\
-你是一个网络协议安全专家和自主智能体。
+你是一个探索网络连接的自主智能体。
 你的长期目标 (Long-term Goal): {long_term_goal}
 你的短期目标 (Short-term Goal): {short_term_goal}
 
