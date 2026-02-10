@@ -16,7 +16,7 @@ KB_FILE = "knowledge_base.json"
 
 # LLM 配置
 # DeepSeek API Key (优先从环境变量读取)
-API_KEY = os.environ.get("DEEPSEEK_API_KEY", "YOUR_API_KEY_HERE")
+API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-5e2c1840e21e4a2fb77f7f4a2d402a27")
 # API 基础 URL
 BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 # 使用的大模型名称

@@ -1,10 +1,7 @@
-
-import socket
-import time
-import json
 import sys
 import os
 from llm_client import LLMClient
+from connection_manager import SocketClient
 import config
 from config import Colors
 
@@ -130,61 +127,42 @@ def main():
     long_term_goal = "探索服务器并理解含义，根据服务器的特点确定一个长期目标。"
     short_term_goal = "成功登录服务器"
     
+    # 初始化网络客户端
+    client = SocketClient()
+    
     while True: # 自动重连循环
-        s = None
-        try:
-            # 连接
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(5.0)
-                s.connect((TARGET_IP, TARGET_PORT))
-                log_colored("系统", f"已连接到 {TARGET_IP}:{TARGET_PORT}", Colors.WHITE)
-            except Exception as e:
-                log_colored("系统", f"连接失败：{e}。5秒后重试...", Colors.RED)
-                time.sleep(5)
-                continue
+        # 连接
+        if not client.connect():
+            print(f"{Colors.RED}[系统] 5秒后重试...{Colors.RESET}")
+            time.sleep(5)
+            continue
 
-            # 交互循环
-            while True:
-                # --- 1. 观察 (接收) ---
-                try:
-                    data = s.recv(4096)
-                    if not data:
-                        log_colored("系统", "服务器关闭了连接", Colors.RED)
-                        break
-                    server_output = data.decode('utf-8', errors='ignore').strip()
-                    # Server output keeps its own colors if any, we don't add wrapper color
-                    log_colored("服务器", server_output) 
-                except socket.timeout:
-                    server_output = "<超时 - 无响应>"
-                    log_colored("服务器", server_output)
-                except (ConnectionResetError, BrokenPipeError) as e:
-                    log_colored("系统", f"连接中断：{e}", Colors.RED)
-                    break # 跳出内层循环，触发重连
-                except Exception as e:
-                    log_colored("系统", f"Socket 错误：{e}", Colors.RED)
-                    break
+        # 交互循环
+        while client.connected:
+            # --- 1. 观察 (接收) ---
+            server_output = client.receive()
+            if server_output is None: # 连接断开或错误
+                break
+            
+            # 打印服务器原始输出 (保持颜色)
+            log_colored("服务器", server_output)
 
-                # 清理服务器输出中的控制字符（保留换行符）
-                import re
-                # 移除 ANSI 转义序列
-                server_output_clean = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', server_output)
-                # 移除除了 \n 和可打印字符以外的控制字符
-                server_output_clean = "".join(ch for ch in server_output_clean if ch == '\n' or (ord(ch) >= 32 and ord(ch) != 127))
+            # 清理数据用于 LLM 分析
+            server_output_clean = client.clean_ansi(server_output)
+            
+            # --- 2. 分析与规划 (LLM) ---
+            
+            # 加载最新的知识库
+            current_kb = load_kb()
                 
-                # --- 2. 分析与规划 (LLM) ---
+            # 构建知识库字符串
+            kb_str = "\n".join([f"- {k}" for k in current_kb]) if current_kb else "暂无。"
                 
-                # 加载最新的知识库
-                current_kb = load_kb()
+            # 构建最近历史记录
+            recent_history = history[-MAX_HISTORY_ROUNDS:]
+            history_str = "\n".join(recent_history)
                 
-                # 构建知识库字符串
-                kb_str = "\n".join([f"- {k}" for k in current_kb]) if current_kb else "暂无。"
-                
-                # 构建最近历史记录
-                recent_history = history[-MAX_HISTORY_ROUNDS:]
-                history_str = "\n".join(recent_history)
-                
-                system_prompt = f"""\
+            system_prompt = f"""\
 你是一个探索网络连接的自主智能体。
 你的长期目标 (Long-term Goal): {long_term_goal}
 你的短期目标 (Short-term Goal): {short_term_goal}
@@ -224,75 +202,70 @@ def main():
 }}
                 """
                 
-                user_msg = f"服务器说：{server_output_clean}。你的下一步行动是什么？"
-                
-                print("[*] 思考中...") # 保持控制台提示，不计入日志
-                
-                def main_logic_validator(res):
-                    # 简单验证：必须是字典，且包含 analysis 和 next_payload
-                    return isinstance(res, dict) and "analysis" in res
+            user_msg = f"服务器说：{server_output_clean}。你的下一步行动是什么？"
+            
+            print("[*] 思考中...") # 保持控制台提示，不计入日志
+            
+            def main_logic_validator(res):
+                # 简单验证：必须是字典，且包含 analysis 和 next_payload
+                return isinstance(res, dict) and "analysis" in res
 
-                decision = call_llm_with_retry(llm, system_prompt, user_msg, json_mode=True, validator=main_logic_validator)
+            decision = call_llm_with_retry(llm, system_prompt, user_msg, json_mode=True, validator=main_logic_validator)
+            
+            # 解析决策
+            analysis = decision.get("analysis", "无分析")
+            new_kb = decision.get("new_knowledge", "")
+            new_long_goal = decision.get("long_term_goal", long_term_goal)
+            new_short_goal = decision.get("short_term_goal", short_term_goal)
+            payload = decision.get("next_payload", "")
+            
+            log_colored("大脑", f"分析：{analysis}", Colors.CYAN)
+            
+            # 更新目标
+            if new_long_goal != long_term_goal:
+                log_colored("大脑", f"长期目标更新：{long_term_goal} -> {new_long_goal}", Colors.BLUE)
+                long_term_goal = new_long_goal
                 
-                # 解析决策
-                analysis = decision.get("analysis", "无分析")
-                new_kb = decision.get("new_knowledge", "")
-                new_long_goal = decision.get("long_term_goal", long_term_goal)
-                new_short_goal = decision.get("short_term_goal", short_term_goal)
-                payload = decision.get("next_payload", "")
-                
-                log_colored("大脑", f"分析：{analysis}", Colors.CYAN)
-                
-                # 更新目标
-                if new_long_goal != long_term_goal:
-                    log_colored("大脑", f"长期目标更新：{long_term_goal} -> {new_long_goal}", Colors.BLUE)
-                    long_term_goal = new_long_goal
-                    
-                if new_short_goal != short_term_goal:
-                    log_colored("大脑", f"短期目标更新：{short_term_goal} -> {new_short_goal}", Colors.YELLOW)
-                    short_term_goal = new_short_goal
+            if new_short_goal != short_term_goal:
+                log_colored("大脑", f"短期目标更新：{short_term_goal} -> {new_short_goal}", Colors.YELLOW)
+                short_term_goal = new_short_goal
     
-                # --- 3. 更新状态 ---
-                if new_kb:
-                    # 使用 LLM 进行二次熵检查
-                    if check_entropy(llm, current_kb, new_kb):
-                        log_colored("大脑", f"习得并保存（LLM确认高熵）：{new_kb}", Colors.MAGENTA)
-                        current_kb.append(new_kb)
-                        save_kb(current_kb)
-                    else:
-                         # 低熵信息可以不记录到日志以减少噪音，或者用灰色/白色记录
-                         log_colored("大脑", f"知识被LLM判定为冗余（低熵）：{new_kb}", Colors.RESET)
+            # --- 3. 更新状态 ---
+            if new_kb:
+                # 使用 LLM 进行二次熵检查
+                if check_entropy(llm, current_kb, new_kb):
+                    log_colored("大脑", f"习得并保存（LLM确认高熵）：{new_kb}", Colors.MAGENTA)
+                    current_kb.append(new_kb)
+                    save_kb(current_kb)
+                else:
+                        # 低熵信息可以不记录到日志以减少噪音，或者用灰色/白色记录
+                        log_colored("大脑", f"知识被LLM判定为冗余（低熵）：{new_kb}", Colors.RESET)
     
                 # --- 4. 行动 (发送) ---
-                if payload:
-                    log_colored("客户端", f"发送：{payload}", Colors.GREEN)
-                    try:
-                        s.sendall((payload + "\n").encode('utf-8'))
-                        # 更新历史
-                        history.append(f"In: {payload} | Out: {server_output_clean[:50]}...")
-                    except (ConnectionResetError, BrokenPipeError) as e:
-                        log_colored("系统", f"发送错误（连接中断）：{e}", Colors.RED)
-                        break # 触发重连
-                    except Exception as e:
-                        log_colored("系统", f"发送错误：{e}", Colors.RED)
-                        break
+                # --- 4. 行动 (发送) ---
+            # --- 4. 行动 (发送) ---
+            if payload:
+                log_colored("客户端", f"发送：{payload}", Colors.GREEN)
+                if client.send(payload):
+                    # 更新历史
+                    history.append(f"In: {payload} | Out: {server_output_clean[:50]}...")
                 else:
-                    log_colored("大脑", "决定不发送任何内容。", Colors.CYAN)
-                
-                # 避免过快请求服务器
-                time.sleep(1)
+                    break # 发送失败，触发重连
+            else:
+                log_colored("大脑", "决定不发送任何内容。", Colors.CYAN)
+            
+            # 避免过快请求服务器
+            time.sleep(1)
         
-        except KeyboardInterrupt:
-            print("\n[!] 用户中断。")
-            break
-        except Exception as e:
+    except KeyboardInterrupt:
+        print("\n[!] 用户中断。")
+        break
+    except Exception as e:
              print(f"[!] 发生未捕获异常：{e}。5秒后重启...")
-             log_to_file(f"发生未捕获异常：{e}。5秒后重启...")
+             # log_to_file(f"发生未捕获异常：{e}。5秒后重启...") # log_to_file 未定义，先注释掉或移除
              time.sleep(5)
-        finally:
-            if s:
-                s.close()
-                print("[*] 已断开连接。")
+    finally:
+        client.disconnect()
 
 if __name__ == "__main__":
     main()
